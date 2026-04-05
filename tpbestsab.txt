@@ -1,0 +1,264 @@
+--[[ 
+Auto tp premium
+    BESTSAB’S TELEPORT PREMIUM v5
+    - REFINED: Precise coordinate clicking for Roblox Native Block Menu.
+    - SPEED: Optimized Invisibility Cloak equip-to-activate timing.
+    - FIX: Added multi-click attempt to ensure the block registers.
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local StarterGui = game:GetService("StarterGui")
+local GuiService = game:GetService("GuiService")
+local Player = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- CONFIGURATION
+local TARGET_TOOL = "Flying Carpet"
+local INVIS_TOOL = "Invisibility Cloak"
+local TELEPORT_DELAY = 0.18
+local SAFETY_DELAY = 0.2 -- Reduced for faster activation
+local DEFAULT_KEYBIND = Enum.KeyCode.T
+
+local THEME = {
+    Bg = Color3.fromRGB(25, 25, 30),
+    Accent = Color3.fromRGB(0, 170, 255),
+    Text = Color3.fromRGB(255, 255, 255),
+    Stroke = Color3.fromRGB(80, 80, 90),
+    Warning = Color3.fromRGB(255, 60, 60)
+}
+
+local WAYPOINTS = {
+    Vector3.new(-355.618530, -6.595164, 113.490646),
+    Vector3.new(-348.447449, -6.595164, 21.699335),
+    Vector3.new(-331.782501, -4.480436, 20.512627)
+}
+
+local Toggles = {
+    AutoBlock = false,
+    QuickAccess = false,
+    InvisOnFinish = false
+}
+
+local currentKeybind = DEFAULT_KEYBIND
+local isBinding = false
+local isRunning = false
+
+--------------------------------------------------------------------------------
+-- CORE LOGIC
+--------------------------------------------------------------------------------
+
+local function getClosestPlayer()
+    local closest = nil
+    local maxDist = math.huge
+    local myRoot = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil end
+
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= Player and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (myRoot.Position - p.Character.HumanoidRootPart.Position).Magnitude
+            if dist < maxDist then
+                maxDist = dist
+                closest = p
+            end
+        end
+    end
+    return closest
+end
+
+local function triggerRobloxBlock()
+    local target = getClosestPlayer()
+    if not target then return end
+    
+    -- Force Roblox Prompt
+    pcall(function()
+        StarterGui:SetCore("PromptBlockPlayer", target)
+    end)
+    
+    -- Wait for UI to be interactable
+    task.wait(0.4) 
+    
+    -- COORDINATE CALCULATION
+    -- Roblox native prompts scale with ViewportSize. 
+    -- The "Block" button is typically at 50% Width and ~53-55% Height.
+    local viewportSize = Camera.ViewportSize
+    local centerX = viewportSize.X / 2
+    local centerY = viewportSize.Y * 0.54 -- Adjusted to sit exactly on the blue 'Block' button
+    
+    -- Perform 2 clicks to ensure registration
+    for i = 1, 2 do
+        VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
+        task.wait(0.02)
+        VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
+        task.wait(0.05)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- UI SYSTEM
+--------------------------------------------------------------------------------
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BestsabPremium_v5"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = Player:WaitForChild("PlayerGui")
+ScreenGui.DisplayOrder = 100
+
+local function createRounded(className, parent, size, color, layoutOrder)
+    local obj = Instance.new(className)
+    obj.Size = size
+    obj.BackgroundColor3 = color
+    obj.BorderSizePixel = 0
+    obj.Parent = parent
+    if layoutOrder then obj.LayoutOrder = layoutOrder end
+    Instance.new("UICorner", obj).CornerRadius = UDim.new(0, 6)
+    local s = Instance.new("UIStroke", obj)
+    s.Color = THEME.Stroke
+    s.Thickness = 1.2
+    return obj
+end
+
+local Toggle = createRounded("TextButton", ScreenGui, UDim2.new(0, 40, 0, 40), THEME.Bg)
+Toggle.Position = UDim2.new(0, 10, 0.5, -20)
+Toggle.Text = "B"
+Toggle.Font = Enum.Font.GothamBlack
+Toggle.TextColor3 = THEME.Accent
+Toggle.TextSize = 18
+
+local Container = createRounded("Frame", ScreenGui, UDim2.new(0, 180, 0, 260), THEME.Bg)
+Container.Position = UDim2.new(0, 60, 0.5, -130)
+Container.Visible = true
+
+local UIList = Instance.new("UIListLayout", Container)
+UIList.SortOrder = Enum.SortOrder.LayoutOrder
+UIList.Padding = UDim.new(0, 5)
+UIList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIList.VerticalAlignment = Enum.VerticalAlignment.Center
+
+local Title = Instance.new("TextLabel", Container)
+Title.Size = UDim2.new(0.9, 0, 0, 30)
+Title.BackgroundTransparency = 1
+Title.Text = "Bestsab Premium v5"
+Title.Font = Enum.Font.GothamBlack
+Title.TextColor3 = THEME.Text
+Title.TextSize = 14
+Title.LayoutOrder = 1
+
+local TeleportBtn = createRounded("TextButton", Container, UDim2.new(0.9, 0, 0, 35), THEME.Accent, 2)
+TeleportBtn.Text = "Teleport"
+TeleportBtn.Font = Enum.Font.GothamBlack
+TeleportBtn.TextColor3 = THEME.Text
+TeleportBtn.TextSize = 16
+
+local AutoBlockBtn = createRounded("TextButton", Container, UDim2.new(0.9, 0, 0, 30), Color3.fromRGB(40, 40, 45), 3)
+AutoBlockBtn.Text = "Auto Block: OFF"
+AutoBlockBtn.Font = Enum.Font.GothamBold
+AutoBlockBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
+AutoBlockBtn.TextSize = 12
+
+local QuickAccessBtn = createRounded("TextButton", Container, UDim2.new(0.9, 0, 0, 30), Color3.fromRGB(40, 40, 45), 4)
+QuickAccessBtn.Text = "Quick Access: OFF"
+QuickAccessBtn.Font = Enum.Font.GothamBold
+QuickAccessBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
+QuickAccessBtn.TextSize = 12
+
+local InvisBtn = createRounded("TextButton", Container, UDim2.new(0.9, 0, 0, 30), Color3.fromRGB(40, 40, 45), 5)
+InvisBtn.Text = "Invis Finish: OFF"
+InvisBtn.Font = Enum.Font.GothamBold
+InvisBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
+InvisBtn.TextSize = 12
+
+local KeybindBtn = createRounded("TextButton", Container, UDim2.new(0.9, 0, 0, 25), Color3.fromRGB(35, 35, 40), 6)
+KeybindBtn.Text = "Key: " .. currentKeybind.Name
+KeybindBtn.Font = Enum.Font.GothamBold
+KeybindBtn.TextColor3 = Color3.fromRGB(150, 150, 150)
+KeybindBtn.TextSize = 10
+
+local QuickBlockGUI = createRounded("TextButton", ScreenGui, UDim2.new(0, 120, 0, 60), THEME.Warning)
+QuickBlockGUI.Position = UDim2.new(0.5, -60, 0.4, 0)
+QuickBlockGUI.Text = "BLOCK"
+QuickBlockGUI.Font = Enum.Font.GothamBlack
+QuickBlockGUI.TextSize = 24
+QuickBlockGUI.TextColor3 = Color3.new(1,1,1)
+QuickBlockGUI.Visible = false
+
+--------------------------------------------------------------------------------
+-- EXECUTION
+--------------------------------------------------------------------------------
+
+local function toggleState(btn, settingName, textPrefix)
+    Toggles[settingName] = not Toggles[settingName]
+    btn.BackgroundColor3 = Toggles[settingName] and THEME.Accent or Color3.fromRGB(40, 40, 45)
+    btn.TextColor3 = Toggles[settingName] and THEME.Text or Color3.fromRGB(150, 150, 150)
+    btn.Text = textPrefix .. (Toggles[settingName] and ": ON" or ": OFF")
+    if settingName == "QuickAccess" then QuickBlockGUI.Visible = Toggles.QuickAccess end
+end
+
+local function RunPath()
+    if isRunning then return end
+    local char = Player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    if not root or not hum then return end
+    
+    isRunning = true
+    TeleportBtn.Text = "..."
+    
+    local carpet = char:FindFirstChild(TARGET_TOOL) or Player.Backpack:FindFirstChild(TARGET_TOOL)
+    if carpet then
+        hum:EquipTool(carpet)
+        task.wait(0.05)
+        carpet:Activate()
+    end
+    
+    root.Anchored = true
+    for i, point in ipairs(WAYPOINTS) do
+        root.CFrame = CFrame.new(point + Vector3.new(0, 4, 0))
+        task.wait(TELEPORT_DELAY)
+    end
+    root.Anchored = false
+    
+    if carpet and carpet.Parent == char then carpet.Parent = Player.Backpack end
+    
+    -- INVIS CLOAK OPTIMIZED SPEED
+    if Toggles.InvisOnFinish then
+        task.wait(SAFETY_DELAY)
+        local cloak = Player.Backpack:FindFirstChild(INVIS_TOOL)
+        if cloak then
+            hum:EquipTool(cloak)
+            -- No extra task.wait here, activate immediately after equip call
+            cloak:Activate()
+        end
+    end
+    
+    TeleportBtn.Text = "Teleport"
+    isRunning = false
+end
+
+ProximityPromptService.PromptTriggered:Connect(function(prompt, playerWhoTriggered)
+    if Toggles.AutoBlock and playerWhoTriggered == Player then
+        if string.find(string.lower(prompt.ActionText), "steal") or string.find(string.lower(prompt.ObjectText), "steal") then
+            triggerRobloxBlock()
+        end
+    end
+end)
+
+QuickBlockGUI.MouseButton1Click:Connect(triggerRobloxBlock)
+Toggle.MouseButton1Click:Connect(function() Container.Visible = not Container.Visible end)
+KeybindBtn.MouseButton1Click:Connect(function() isBinding = true; KeybindBtn.Text = "..." end)
+TeleportBtn.MouseButton1Click:Connect(RunPath)
+AutoBlockBtn.MouseButton1Click:Connect(function() toggleState(AutoBlockBtn, "AutoBlock", "Auto Block") end)
+QuickAccessBtn.MouseButton1Click:Connect(function() toggleState(QuickAccessBtn, "QuickAccess", "Quick Access") end)
+InvisBtn.MouseButton1Click:Connect(function() toggleState(InvisBtn, "InvisOnFinish", "Invis Finish") end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if isBinding and input.UserInputType == Enum.UserInputType.Keyboard then
+        currentKeybind = input.KeyCode
+        KeybindBtn.Text = "Key: " .. currentKeybind.Name
+        isBinding = false
+    elseif not processed and input.KeyCode == currentKeybind then
+        RunPath()
+    end
+end)
